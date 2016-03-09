@@ -112,4 +112,4 @@ class Pin(DBBacked):
 
     @classmethod
     def _table_definition(cls):
-        return 'id CHAR(64) NOT NULL UNIQUE KEY, content VARCHAR(2000) NOT NULL UNIQUE, image VARCHAR(2000), title CHAR(255)'
+        return 'id CHAR(64) NOT NULL UNIQUE KEY, content VARCHAR(2000) NOT NULL, image VARCHAR(2000), title CHAR(255)'
