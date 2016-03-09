@@ -5,33 +5,61 @@
 # Copyright 2016 Loren Chapple
 #
 """
-Pinterest cloan REST API
+Pinterest cloan -- REST API
 """
 
 
+import json
 import httplib
-from tornado import web, httputil, gen
+from tornado import web, gen
 from user import User, UnauthorizedError
+from pin import Pin
+from userpin import UserPin
 
 
 class PinterestAPI(web.Application):
     API_MAJOR_VERSION = 1
     API_MINOR_VERSION = 0
-    LOGIN_URL = r'/api/login'
 
     def __init__(self, path_to_frontend, log):
         super(PinterestAPI, self).__init__([(r'/api/version$', VersionHandler),
-                                            (self.LOGIN_URL+'$', LoginHandler),
                                             (r'/api/v1/users$', UsersHandler, {}, UsersHandler.__name__),
                                             (r'/api/v1/users/([^/.]+)$', UserMaintenanceHandler, {}, UserMaintenanceHandler.__name__),
-                                            (r'/api/v1/users/([^/.]+)/boards$', BoardsHandler, {}, BoardsHandler.__name__),
-                                            (r'/api/v1/users/([^/.]+)/boards/([^/.]+)$', BoardMaintenanceHandler, {}, BoardMaintenanceHandler.__name__),
-                                            (r'/api/v1/users/([^/.]+)/boards/([^/.]+)/pins$', PinsHandler, {}, PinsHandler.__name__),
-                                            (r'/api/v1/users/([^/.]+)/boards/([^/.]+)/pins/([^/.]+)$', PinMaintenanceHandler, {}, PinMaintenanceHandler.__name__),
-                                            (r'/(.*)', web.StaticFileHandler, {'path': path_to_frontend, 'default_filename': 'index.html'})],
-                                           login_url=self.LOGIN_URL,
+                                            #
+                                            # skip concept of boards for the moment... and just have pins owned by user directly
+                                            # (r'/api/v1/users/([^/.]+)/boards$', BoardsHandler, {}, BoardsHandler.__name__),
+                                            # (r'/api/v1/users/([^/.]+)/boards/([^/.]+)$', BoardMaintenanceHandler, {}, BoardMaintenanceHandler.__name__),
+                                            # (r'/api/v1/users/([^/.]+)/boards/([^/.]+)/pins$', UserPinsHandler, {}, UserPinsHandler.__name__),
+                                            # (r'/api/v1/users/([^/.]+)/boards/([^/.]+)/pins/([^/.]+)$', PinMaintenanceHandler, {}, PinMaintenanceHandler.__name__),
+                                            #
+                                            (r'/api/v1/pins$', RawPinsHandler, {}, RawPinsHandler.__name__),
+                                            (r'/api/v1/pins/([^/.]+)$', RawPinMaintenanceHandler, {}, RawPinMaintenanceHandler.__name__),
+                                            (r'/api/v1/users/([^/.]+)/pins$', UserPinsHandler, {}, UserPinsHandler.__name__),
+                                            (r'/api/v1/users/([^/.]+)/pins/([^/.]+)$', PinMaintenanceHandler, {}, PinMaintenanceHandler.__name__),
+                                            #
+                                            (r'/(.*)$', web.StaticFileHandler, {'path': path_to_frontend, 'default_filename': 'index.html'})],
                                            cookie_secret='9d007b5fa7974d9a9b41a19741eec415')
         self.log = log
+        self.base_uri = None    # initialized when recieve 1st request
+
+    def link(self, path):
+        return self.base_uri + path
+
+    def user_representation(self, user):
+        rep = {'links': {'self': self.link(self.reverse_url(UserMaintenanceHandler.__name__, user.guid)),
+                         'pins': self.link(self.reverse_url(UserPinsHandler.__name__, user.guid))}}
+        rep.update(user.api_representation)
+        return rep
+
+    def pin_representation(self, pin):
+        rep = {'links': {'self': self.link(self.reverse_url(RawPinMaintenanceHandler.__name__, pin.guid))}}
+        rep.update(pin.api_representation)
+        return rep
+
+    def userpin_representation(self, userpin):
+        rep = {'links': {'self': self.link(self.reverse_url(PinMaintenanceHandler.__name__, userpin.user_guid, userpin.pin_guid))}}
+        rep.update(userpin.api_representation)
+        return rep
 
 
 #
@@ -40,11 +68,19 @@ class PinterestAPI(web.Application):
 class BaseHandler(web.RequestHandler):
     AUTH_COOKIE = 'user'
 
+    def prepare(self):
+        super(BaseHandler, self).prepare()
+        if not self.application.base_uri:
+            self.application.base_uri = '{}://{}'.format(self.request.protocol, self.request.host)
+
+    def compute_etag(self):
+        return None     # disable caching since Angular $resource doesn't deal with 304's well
+
     def get_current_user(self):
         return self.get_secure_cookie(self.AUTH_COOKIE)
 
-    def set_current_user(self, uid):
-        self.set_secure_cookie(self.AUTH_COOKIE, uid)
+    def set_current_user(self, guid):
+        self.set_secure_cookie(self.AUTH_COOKIE, guid)
 
     def clear_current_user(self):
         self.clear_cookie(self.AUTH_COOKIE)
@@ -55,7 +91,7 @@ class UserResourceHandler(BaseHandler):
         super(UserResourceHandler, self).prepare()
         # assumes first path arg in uri is the id of the resource owner
         authenticated_uid = self.get_current_user()
-        if authenticated_uid != self.path_args[0]:
+        if len(self.path_args) > 0 and authenticated_uid != self.path_args[0]:
             self.send_error(httplib.UNAUTHORIZED)
 
 
@@ -69,91 +105,59 @@ class VersionHandler(BaseHandler):
                     'api_version': '{}.{}'.format(self.application.API_MAJOR_VERSION, self.application.API_MINOR_VERSION)})
 
 
-#
-#  basic login handler
-#
-class LoginHandler(BaseHandler):
-    # TODO: remove when have login page in app and change LOGIN_URL to point to it
-    def get(self):
-        self.write('<html><body>'
-                   '<form action="{}" method="post">'.format(self.application.LOGIN_URL) +
-                   'name: <input type="text" name="name">'
-                   'password: <input type="password" name="pw">'
-                   '<input type="hidden" value="{}" name="next">'.format(self.get_argument('next', '')) +
-                   '<input type="submit" value="Sign in">'
-                   '</form>'
-                   '<form action="{}" method="post">'.format(self.reverse_url(UsersHandler.__name__)) +
-                   'name: <input type="text" name="name">'
-                   'password: <input type="password" name="pw">'
-                   '<input type="hidden" value="{}" name="next">'.format(self.get_argument('next', '')) +
-                   '<input type="submit" value="Create account">'
-                   '</form>'
-                   '</body></html>')
-
+class UsersHandler(BaseHandler):
     @gen.coroutine
-    def post(self):
+    def get(self):
         try:
             name = self.get_argument('name')
             pw = self.get_argument('pw')
             target_url = self.get_argument('next', None)
         except web.MissingArgumentError as e:
-            self.application.log.info('Login request malformed, error={}, url={}, body={}'.format(e, self.request.uri, self.request.body))
+            self.application.log.info('Users GET (login) request malformed, error={}, url={}, body={}'.format(e, self.request.uri, self.request.body))
             self.send_error(httplib.BAD_REQUEST)
             return
 
         try:
             user = yield User.login(name, pw)
         except (ValueError, UnauthorizedError):
-            # failed to login, send back to login page
-            params = {'invalid': 'true'}
-            if target_url:
-                params.update({'next': target_url})
-            self.redirect(httputil.url_concat(self.application.LOGIN_URL, params))
+            self.send_error(httplib.UNAUTHORIZED)
             return
 
-        self.set_current_user(user.uid)
+        self.set_current_user(user.guid)
         if target_url:
             self.redirect(target_url)
         else:
-            self.set_header('Location', self.reverse_url(UserMaintenanceHandler.__name__, user.uid))
-            self.write({'uid': user.uid,
-                        'name': user.name,
-                        'boards': self.reverse_url(BoardsHandler.__name__, user.uid)})
+            self.write(self.application.user_representation(user))
 
-
-
-class UsersHandler(BaseHandler):
     @gen.coroutine
     def post(self):
         try:
-            name = self.get_argument('name')
-            pw = self.get_argument('pw')
-            target_url = self.get_argument('next', None)
-        except web.MissingArgumentError as e:
+            body = json.loads(self.request.body)
+            name = body['name']
+            pw = body['pw']
+            target_url = body.get('next')
+        except (KeyError, ValueError, TypeError) as e:
             self.application.log.info('User creation request malformed, error={}, url={}, body={}'.format(e, self.request.uri, self.request.body))
             self.send_error(httplib.BAD_REQUEST)
             return
 
         exists = yield User.exists(name)
         if exists:
-            self.redirect(httputil.url_concat(self.application.LOGIN_URL, {'next': target_url} if target_url else {}))
+            self.send_error(httplib.CONFLICT)
             return
 
         user = User(name, pw)
         yield user.save()
-        self.set_current_user(user.uid)
+        self.set_current_user(user.guid)
         if target_url:
             self.redirect(target_url)
         else:
-            self.set_header('Location', self.reverse_url(UserMaintenanceHandler.__name__, user.uid))
-            self.write({'uid': user.uid,
-                        'name': user.name,
-                        'boards': self.reverse_url(BoardsHandler.__name__, user.uid)})
+            self.set_header('Location', self.reverse_url(UserMaintenanceHandler.__name__, user.guid))
+            self.write(self.application.user_representation(user))
+            self.set_status(httplib.CREATED)
 
 
 class UserMaintenanceHandler(UserResourceHandler):
-
-    @web.authenticated
     @gen.coroutine
     def get(self, uid):
         try:
@@ -163,9 +167,7 @@ class UserMaintenanceHandler(UserResourceHandler):
             self.send_error(httplib.NOT_FOUND)
             return
 
-        self.write({'uid': uid,
-                    'name': user.name,
-                    'boards': self.reverse_url(BoardsHandler.__name__, uid)})
+        self.write(self.application.user_representation(user))
 
     def patch(self, uid):
         raise NotImplementedError
@@ -174,39 +176,77 @@ class UserMaintenanceHandler(UserResourceHandler):
         raise NotImplementedError
 
 
-class BoardsHandler(UserResourceHandler):
+class RawPinsHandler(BaseHandler):
+    @gen.coroutine
+    def get(self):
+        limit = self.get_argument('limit', None)
+        pins = yield Pin.list(limit)
+        self.write({pin.guid: self.application.pin_representation(pin) for pin in pins})
+
+
+class RawPinMaintenanceHandler(BaseHandler):
+    @gen.coroutine
+    def get(self, pid):
+        try:
+            pin = yield Pin.fetch(guid=pid)
+        except KeyError:
+            self.send_error(httplib.NOT_FOUND)
+            return
+        self.write(self.application.pin_representation(pin))
+
+
+class UserPinsHandler(UserResourceHandler):
+    @gen.coroutine
     def get(self, uid):
-        raise NotImplementedError
+        limit = self.get_argument('limit', None)
+        userpins = yield UserPin.list_for_user(uid, limit)
+        self.write({upin.pin_guid: self.application.userpin_representation(upin) for upin in userpins})
 
+    @gen.coroutine
     def post(self, uid):
-        raise NotImplementedError
+        try:
+            body = json.loads(self.request.body)
+            pid = body.get('pin_id')
+            content = body.get('content')
+            image = body.get('image')
+            title = body.get('title')
+            caption = body.get('caption')
+            private = body.get('private', False)
+            if pid is None and content is None:
+                raise KeyError
+        except (KeyError, ValueError, TypeError):
+            self.send_error(httplib.BAD_REQUEST)
+            return
 
+        try:
+            pin = yield Pin.fetch(guid=pid, content=content)
+        except KeyError:
+            if not content:
+                self.send_error(httplib.NOT_FOUND)
+                return
+            pin = Pin(content, image, title)
+            yield pin.save()
 
-class BoardMaintenanceHandler(UserResourceHandler):
-    def get(self, uid, bid):
-        raise NotImplementedError
-
-    def patch(self, uid, bid):
-        raise NotImplementedError
-
-    def delete(self, uid, bid):
-        raise NotImplementedError
-
-
-class PinsHandler(UserResourceHandler):
-    def get(self, uid, bid):
-        raise NotImplementedError
-
-    def post(self, uid, bid):
-        raise NotImplementedError
+        userpin = UserPin(uid, pin, caption, private)
+        yield userpin.save()
+        self.write(self.application.userpin_representation(userpin))
+        self.set_status(httplib.CREATED)
 
 
 class PinMaintenanceHandler(UserResourceHandler):
-    def get(self, uid, bid, pid):
+    @gen.coroutine
+    def get(self, uid, pid):
+        try:
+            userpin = yield UserPin.fetch(uid, pid)
+        except KeyError:
+            self.send_error(httplib.NOT_FOUND)
+            return
+        self.write(self.application.userpin_representation(userpin))
+
+    def patch(self, uid, pid):
         raise NotImplementedError
 
-    def patch(self, uid, bid, pid):
-        raise NotImplementedError
-
-    def delete(self, uid, bid, pid):
-        raise NotImplementedError
+    @gen.coroutine
+    def delete(self, uid, pid):
+        yield UserPin.delete(uid, pid)
+        self.set_status(httplib.NO_CONTENT)

@@ -5,7 +5,7 @@
 # Copyright 2016 Loren Chapple
 #
 """
-Pinterest cloan DB pool
+Pinterest cloan -- DB utils
 """
 
 from tornado import gen
@@ -39,10 +39,14 @@ class DBBacked(object):
     @gen.coroutine
     def db_table_exists(cls):
         cursor = yield cls.db_pool().execute("SHOW TABLES LIKE '{}'".format(cls._table_name()))
-        raise gen.Return(cursor.rowcount >= 1)
+        exists = cursor.rowcount >= 1
+        cursor.close()
+        raise gen.Return(exists)
 
     @classmethod
     @gen.coroutine
     def create_table(cls):
-        yield cls.db_pool().execute("DROP TABLE IF EXISTS {}".format(cls._table_name()))
-        yield cls.db_pool().execute("CREATE TABLE {} ({})".format(cls._table_name(), cls._table_definition()))
+        cursor = yield cls.db_pool().execute("DROP TABLE IF EXISTS {}".format(cls._table_name()))
+        cursor.close()
+        cursor = yield cls.db_pool().execute("CREATE TABLE {} ({})".format(cls._table_name(), cls._table_definition()))
+        cursor.close()

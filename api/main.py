@@ -5,7 +5,7 @@
 # Copyright 2016 Loren Chapple
 #
 """
-Pinerterest clone main
+Pinerterest clone -- main
 """
 
 import sys
@@ -17,15 +17,18 @@ from tornado.options import options, define
 
 from api import PinterestAPI
 from user import User
+from pin import Pin
+from userpin import UserPin
 from db import init_db_connection_pool
 
+Log = None
 
 #
 # command line paramaters
 #
 define('debug', default=True)
 define('port', type=int, default=80, help='Port to listen on')
-define('fe_path', type=str, default='./web', help='Path to frontend files e.g. index.html')
+define('fe_path', type=str, default='./app', help='Path to front-end files e.g. index.html')
 define('db_host', type=str, default='127.0.0.1', help='Database server hostname/ip')
 define('db_port', type=int, default=3306, help='Database server port')
 define('db_name', type=str, default='pinterest', help='Database name')
@@ -38,7 +41,7 @@ define('force_db_reset', type=int, default=0, help='Set to non-zero to force db 
 
 @gen.coroutine
 def init_db():
-    models = (User,)
+    models = (User, Pin, UserPin)
     init_tables = options.force_db_reset != 0
     init_db_connection_pool(options.db_host, options.db_port, options.db_user, options.db_pw, options.db_name)
     if not init_tables:

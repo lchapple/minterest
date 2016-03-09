@@ -1,0 +1,12 @@
+<div ng-controller="LoginCtrl" class="container">
+    <form ng-submit="submit()" class="form-signin" >
+        <h2 class="form-signin-heading">Please sign in</h2>
+        <div class="alert-danger">{{form_error}}</div>
+        <label for="inputEmail" class="sr-only">Name/email</label>
+        <input type="text" id="inputEmail" ng-model="name" class="form-control" placeholder="Name or email" required autofocus>
+        <label for="inputPassword" class="sr-only">Password</label>
+        <input type="password" ng-model="pw" id="inputPassword" class="form-control" placeholder="Password" required>
+        <button class="btn btn-lg btn-primary btn-block" type="submit">Sign in</button>
+        <div class=""><a href="#/createacct">or create a new account</a></div>
+    </form>
+</div>

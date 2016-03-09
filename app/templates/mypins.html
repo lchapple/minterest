@@ -1,0 +1,32 @@
+<div ng-controller="MyPinsCtrl" class="container-fluid">
+    <div>
+        <form><button type="button" class="btn btn-default" ng-click="goto('/publicpins')">All Pins</button></form>
+        <form><button type="button" class="btn btn-default" ng-click="goto('/addpin')">Add a pin</button></form>
+    </div>
+    <h1>{{user_name}}'s pins</h1>
+    <div ng-repeat="pin in pins">
+        <div ng-if="$index %3 == 0" class="row">
+            <div class="col-md-4">
+
+                <ul class="pinlist">
+                    <li><a href="{{pin.content}}" target="_blank"><img src="{{pin.image}}" alt="{{pin.title}}" class="pin-image"></a></li>
+                    <li><p>{{pin.title}}</p></li>
+                    <li><p>{{pin.caption}}</p></li>
+                    <li><form><button type="button" class="btn btn-danger" ng-click="unpin(pin.id)">delete</button></form></li>
+                </ul>
+
+
+            </div>
+        </div>
+        <div ng-if="$index %3 != 0" class="col-md-4">
+
+            <ul class="pinlist">
+                <li><a href="{{pin.content}}" target="_blank"><img src="{{pin.image}}" alt="{{pin.title}}" class="pin-image"></a></li>
+                <li><p>{{pin.title}}</p></li>
+                <li><p>{{pin.caption}}</p></li>
+                <li><form><button type="button" class="btn btn-danger" ng-click="unpin(pin.id)">delete</button></form></li>
+            </ul>
+
+        </div>
+    </div>
+</div>

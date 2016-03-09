@@ -5,7 +5,7 @@
 # Copyright 2016 Loren Chapple
 #
 """
-Pinterest cloan User
+Pinterest cloan -- User
 """
 
 import hashlib
@@ -21,14 +21,19 @@ class User(DBBacked):
 
     def __init__(self, name, pw):
         super(User, self).__init__()
-        self._uid = User._uid_from_name(name)
+        self._guid = User._guid_from_name(name)
         self._name = name[:128]
         self._pw = pw[:32]
         self._stored = False
 
     @property
-    def uid(self):
-        return self._uid
+    def api_representation(self):
+        return {'id': self._guid,
+                'name': self.name}
+
+    @property
+    def guid(self):
+        return self._guid
 
     @property
     def name(self):
@@ -37,17 +42,21 @@ class User(DBBacked):
     @gen.coroutine
     def update(self, name=None, pw=None):
         if name:
-            self._name = name[128]
+            self._name = name[:128]
         if pw:
             self._pw = pw[:32]
         if not self._stored:
-            cursor = yield self.db_pool().execute("INSERT INTO user (uid, name, pw) VALUES (%s, %s, %s)", (self._uid, self._name, self._pw))
-            if cursor.rowcount != 1:
+            cursor = yield self.db_pool().execute("INSERT INTO user (id, name, pw) VALUES (%s, %s, %s)", (self._guid, self._name, self._pw))
+            failed = cursor.rowcount != 1
+            cursor.close()
+            if failed:
                 raise KeyError
             self._stored = True
         elif name or pw:
-            cursor = yield self.db_pool().execute("UPDATE user SET name=%s,pw=%s WHERE uid=%s", (self._name, self._pw, self._uid))
-            if cursor.rowcount != 1:
+            cursor = yield self.db_pool().execute("UPDATE user SET name=%s,pw=%s WHERE id=%s", (self._name, self._pw, self._guid))
+            failed = cursor.rowcount != 1
+            cursor.close()
+            if failed:
                 raise KeyError
 
     @gen.coroutine
@@ -56,11 +65,13 @@ class User(DBBacked):
 
     @classmethod
     @gen.coroutine
-    def fetch(cls, uid):
-        cursor = yield cls.db_pool().execute("SELECT uid, name, pw FROM user WHERE uid=%s", (uid,))
+    def fetch(cls, guid):
+        cursor = yield cls.db_pool().execute("SELECT id, name, pw FROM user WHERE id=%s", (guid,))
         if cursor.rowcount != 1:
-            raise ValueError
+            cursor.close()
+            raise KeyError
         row = cursor.fetchone()
+        cursor.close()
         user = cls(row[1], row[2])
         user._stored = True
         raise gen.Return(user)
@@ -68,11 +79,13 @@ class User(DBBacked):
     @classmethod
     @gen.coroutine
     def login(cls, name, pw):
-        uid = User._uid_from_name(name)
-        cursor = yield cls.db_pool().execute("SELECT uid, name, pw FROM user WHERE uid=%s", (uid,))
+        guid = User._guid_from_name(name)
+        cursor = yield cls.db_pool().execute("SELECT id, name, pw FROM user WHERE id=%s", (guid,))
         if cursor.rowcount != 1:
+            cursor.close()
             raise ValueError
         row = cursor.fetchone()
+        cursor.close()
         if pw != row[2]:
             raise UnauthorizedError('User ({}) password incorrect'.format(name))
         user = cls(name, pw)
@@ -82,15 +95,17 @@ class User(DBBacked):
     @classmethod
     @gen.coroutine
     def exists(cls, name):
-        uid = User._uid_from_name(name)
-        cursor = yield cls.db_pool().execute("SELECT uid, name, pw FROM user WHERE uid=%s", (uid,))
-        raise gen.Return(cursor.rowcount == 1)
+        guid = User._guid_from_name(name)
+        cursor = yield cls.db_pool().execute("SELECT id FROM user WHERE id=%s", (guid,))
+        exists = cursor.rowcount == 1
+        cursor.close()
+        raise gen.Return(exists)
 
     def boards(self):
         raise NotImplementedError
 
     @staticmethod
-    def _uid_from_name(name):
+    def _guid_from_name(name):
         return hashlib.sha256(name).hexdigest()
 
     @classmethod
@@ -99,4 +114,4 @@ class User(DBBacked):
 
     @classmethod
     def _table_definition(cls):
-        return 'uid CHAR(64) NOT NULL UNIQUE KEY, name VARCHAR(128) NOT NULL UNIQUE, pw CHAR(32) NOT NULL'
+        return 'id CHAR(64) NOT NULL UNIQUE KEY, name VARCHAR(128) NOT NULL UNIQUE, pw CHAR(32) NOT NULL'
