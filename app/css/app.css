@@ -6,26 +6,13 @@ body {
   background-color: #eee;
 }
 
-.pin-image {
-  background-color: white;
-  max-width: 250px;
-  overflow: hidden;
-  position: relative;
-  float: left;
-  padding-top: 10px;
-  padding-bottom: 5px;
-  padding-right: 10px;
-}
-
-ul.pinlist {
-  margin: 0;
-  list-style: none;
-}
-
 h1 {
   border-bottom: 1px solid gray;
 }
 
+.pin-block {
+    margin-bottom: 30px;
+}
 
 .form-signin {
   max-width: 330px;

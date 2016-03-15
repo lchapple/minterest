@@ -4,28 +4,12 @@
         <form><button type="button" class="btn btn-default" ng-click="goto('/addpin')">Add a pin</button></form>
     </div>
     <h1>Everybody's pins</h1>
-    <div class="col-md-8"></div>
     <div ng-repeat="pin in pins">
-        <div ng-if="$index %3 == 0" class="row">
-            <div class="col-md-4">
-
-                <ul class="pinlist">
-                    <li><a href="{{pin.content}}" target="_blank"><img src="{{pin.image}}" alt="{{pin.title}}" class="pin-image"></a></li>
-                    <li><p>{{pin.title}}</p></li>
-                    <li><form><button type="button" class="btn btn-info" ng-click="addToMyPins(pin.id)">pin it!</button></form></li>
-                </ul>
-
-
-            </div>
-        </div>
-        <div ng-if="$index %3 != 0" class="col-md-4">
-
-            <ul class="pinlist">
-                <li><a href="{{pin.content}}" target="_blank"><img src="{{pin.image}}" alt="{{pin.title}}" class="pin-image"></a></li>
-                <li><p>{{pin.title}}</p></li>
-                <li><form><button type="button" class="btn btn-info" ng-click="addToMyPins(pin.id)">pin it!</button></form></li>
-            </ul>
-
+        <!--should be inserting <div class="row" every 3rd col entry but need to also insert </div> at end of group, seems to work w/o rows but likely isn't reliable-->
+        <div class="col-md-4 pin-block">
+            <a href="{{pin.content}}" target="_blank"><img src="{{pin.image}}" alt="{{pin.title}}" class="img-responsive img-rounded"></a>
+            <p><strong>{{pin.title}}</strong></p>
+            <form><button type="button" class="btn btn-info" ng-click="addToMyPins(pin.id)">pin it!</button></form>
         </div>
     </div>
 </div>
