@@ -9,244 +9,225 @@ Pinterest cloan -- REST API
 """
 
 
-import json
+from flask import Flask, jsonify, request, session, abort, current_app, url_for
+from flask.ext.sqlalchemy import SQLAlchemy
 import httplib
-from tornado import web, gen
-from user import User, UnauthorizedError
-from pin import Pin
-from userpin import UserPin
 
 
-class PinterestAPI(web.Application):
-    API_MAJOR_VERSION = 1
-    API_MINOR_VERSION = 0
+app = Flask(__name__, static_folder='../app', static_url_path='')
+app.config['SQLALCHEMY_COMMIT_ON_TEARDOWN'] = True
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.secret_key = '834282ec30804df7b1505253c3e8390c'
+db = SQLAlchemy(app)
 
-    def __init__(self, path_to_frontend, log):
-        super(PinterestAPI, self).__init__([(r'/api/version$', VersionHandler),
-                                            (r'/api/v1/users$', UsersHandler, {}, UsersHandler.__name__),
-                                            (r'/api/v1/users/([^/.]+)$', UserMaintenanceHandler, {}, UserMaintenanceHandler.__name__),
-                                            #
-                                            # skip concept of boards for the moment... and just have pins owned by user directly
-                                            # (r'/api/v1/users/([^/.]+)/boards$', BoardsHandler, {}, BoardsHandler.__name__),
-                                            # (r'/api/v1/users/([^/.]+)/boards/([^/.]+)$', BoardMaintenanceHandler, {}, BoardMaintenanceHandler.__name__),
-                                            # (r'/api/v1/users/([^/.]+)/boards/([^/.]+)/pins$', UserPinsHandler, {}, UserPinsHandler.__name__),
-                                            # (r'/api/v1/users/([^/.]+)/boards/([^/.]+)/pins/([^/.]+)$', PinMaintenanceHandler, {}, PinMaintenanceHandler.__name__),
-                                            #
-                                            (r'/api/v1/pins$', RawPinsHandler, {}, RawPinsHandler.__name__),
-                                            (r'/api/v1/pins/([^/.]+)$', RawPinMaintenanceHandler, {}, RawPinMaintenanceHandler.__name__),
-                                            (r'/api/v1/users/([^/.]+)/pins$', UserPinsHandler, {}, UserPinsHandler.__name__),
-                                            (r'/api/v1/users/([^/.]+)/pins/([^/.]+)$', PinMaintenanceHandler, {}, PinMaintenanceHandler.__name__),
-                                            #
-                                            (r'/(.*)$', web.StaticFileHandler, {'path': path_to_frontend, 'default_filename': 'index.html'})],
-                                           cookie_secret='9d007b5fa7974d9a9b41a19741eec415')
-        self.log = log
-        self.base_uri = None    # initialized when recieve 1st request
 
-    def link(self, path):
-        return self.base_uri + path
+API_MAJOR_VERSION = 1
+API_MINOR_VERSION = 0
 
-    def user_representation(self, user):
-        rep = {'links': {'self': self.link(self.reverse_url(UserMaintenanceHandler.__name__, user.guid)),
-                         'pins': self.link(self.reverse_url(UserPinsHandler.__name__, user.guid))}}
-        rep.update(user.api_representation)
+
+def user_representation(user):
+    rep = {'links': {'self': url_for(get_user, uid=user.id, external=True),
+                     'pins': url_for(get_user_pins, uid=user.id)}}
+    rep.update(user.api_representation)
+    return rep
+
+
+def pin_representation(pin):
+    rep = {'links': {'self': url_for(get_pin, pid=pin.id)}}
+    rep.update(pin.api_representation)
+    return rep
+
+
+def userpin_representation(userpin):
+    rep = {'links': {'self': url_for(get_user_pin, uid=userpin.user_id, pid=userpin.pin_id)}}
+    rep.update(userpin.api_representation)
+    return rep
+
+
+@app.route('/')
+def index():
+    return app.send_static_file('index.html')
+
+
+@app.route('/api/version', methods=['GET'])
+def version():
+    return jsonify({'major': API_MAJOR_VERSION,
+                    'minor': API_MINOR_VERSION,
+                    'api_version': '{}.{}'.format(API_MAJOR_VERSION, API_MINOR_VERSION)})
+
+
+@app.route('/api/v1/users', methods=['GET'])
+def login():
+    try:
+        name = request.values['name']
+        pw = request.values['pw']
+    except KeyError as e:
+        current_app.log.info('Users GET (login) request malformed, error={}, url={}, body={}'.format(e, request.url, request.data))
+        abort(httplib.BAD_REQUEST)
+        return
+
+    user = User.query.filter_by(name=name, pw=pw).first_or_404()
+    session['user'] = user
+    return jsonify(user_representation(user))
+
+
+@app.route('/api/v1/users', methods=['POST'])
+def create_account():
+    try:
+        body = request.get_json()
+        name = body['name']
+        pw = body['pw']
+    except (KeyError, ValueError, TypeError) as e:
+        current_app.log.info('User creation request malformed, error={}, url={}, body={}'.format(e, request.url, request.data))
+        abort(httplib.BAD_REQUEST)
+        return
+
+    user = User.query.filter_by(name=name, pw=pw).first()
+    if user:
+        abort(httplib.CONFLICT)
+        return
+
+    user = User(name=name, pw=pw)
+    db.session.add(user)
+    session['user'] = user
+    return jsonify(user_representation(user)), httplib.CREATED
+
+
+@app.route('/api/v1/users/<uid>', methods=['GET'])
+def get_user(uid):
+    user = User.query.filter_by(id=uid).first_or_404()
+    return jsonify(user_representation(user))
+
+
+@app.route('/api/v1/users/<uid>', methods=['PATCH'])
+def patch_user(uid):
+    raise NotImplementedError
+
+
+@app.route('/api/v1/users/<uid>', methods=['DELETE'])
+def delete_user(uid):
+    raise NotImplementedError
+
+
+@app.route('/api/v1/pins', methods=['GET'])
+def get_all_pins():
+    query = Pin.query
+    limit = request.values.get('limit')
+    if limit:
+        query = query.limit(limit)
+    pins = query.all()
+    return jsonify({pin.id: pin_representation(pin) for pin in pins})
+
+
+@app.route('/api/v1/pins/<pid>', methods=['GET'])
+def get_pin(pid):
+    pin = Pin.query.filter_by(id=pid).first_or_404()
+    return jsonify(pin_representation(pin))
+
+
+@app.route('/api/v1/users/<uid>/pins', methods=['GET'])
+def get_user_pins(uid):
+    query = UserPin.query.filter_by(user_id=uid)
+    limit = request.values.get('limit')
+    if limit:
+        query = query.limit(limit)
+    userpins = query.all()
+    return jsonify({upin.pin_id: userpin_representation(upin) for upin in userpins})
+
+
+@app.route('/api/v1/users/<uid>/pins', methods=['POST'])
+def add_user_pin(uid):
+    try:
+        body = request.get_json()
+        pid = body.get('pin_id')
+        content = body.get('content')
+        image = body.get('image')
+        title = body.get('title')
+        caption = body.get('caption')
+        private = body.get('private', False)
+        if pid is None and content is None:
+            raise KeyError
+    except (KeyError, ValueError, TypeError):
+        abort(httplib.BAD_REQUEST)
+        return
+
+    criteria = dict(id=pid) if pid else dict(content=content)
+    pin = Pin.query.filter_by(**criteria).first()
+    if not pin:
+        if not content:
+            abort(httplib.NOT_FOUND)
+            return
+        pin = Pin(content=content, image=image, title=title)
+        db.session.add(pin)
+
+    userpin = UserPin(user_id=uid, pin_id=pin.id, caption=caption, private=private)
+    db.session.add(userpin)
+    return jsonify(userpin_representation(userpin)), httplib.CREATED
+
+
+@app.route('/api/v1/users/<uid>/pins/<pid>', methods=['GET'])
+def get_user_pin(uid, pid):
+    userpin = UserPin.query.filter_by(user_id=uid, pin_id=pid).first_or_404()
+    return jsonify(userpin_representation(userpin))
+
+
+@app.route('/api/v1/users/<uid>/pins/<pid>', methods=['PATCH'])
+def patch_user_pin(uid, pid):
+    raise NotImplementedError
+
+
+@app.route('/api/v1/users/<uid>/pins/<pid>', methods=['DELETE'])
+def delete_user_pin(uid, pid):
+    upin = UserPin.query.filter_by(user_id=uid, pin_id=pid).first_or_404()
+    db.session.delete(upin)
+    return '', httplib.NO_CONTENT
+
+
+class User(db.Model):
+    __tablename__ = 'user'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(128), unique=True, nullable=False)
+    pw = db.Column(db.String(32), nullable=False)
+
+    @property
+    def api_representation(self):
+        return {'id': self.id,
+                'name': self.name}
+
+
+class Pin(db.Model):
+    __tablename__ = 'pin'
+    id = db.Column(db.Integer, primary_key=True)
+    content = db.Column(db.String(2000), unique=False, nullable=False)
+    image = db.Column(db.String(2000), nullable=True)
+    title = db.Column(db.Unicode(255), nullable=True)
+
+    @property
+    def api_representation(self):
+        return {'id': self.id,
+                'content': self.content,
+                'image': self.image,
+                'title': self.title}
+
+
+# TODO: replace this association table with many to many relationship between User and Pin
+class UserPin(db.Model):
+    __tablename__ = 'userpin'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    pin_id = db.Column(db.Integer, db.ForeignKey('pin.id'))
+    caption = db.Column(db.String(512), nullable=True, default=None)
+    private = db.Column(db.Boolean, nullable=False, default=False)
+    modified = db.Column(db.DateTime, nullable=False)
+
+    @property
+    def api_representation(self):
+        rep = self._pin.api_representation
+        rep.update({'caption': self.caption,
+                    'private': self.private})
         return rep
 
-    def pin_representation(self, pin):
-        rep = {'links': {'self': self.link(self.reverse_url(RawPinMaintenanceHandler.__name__, pin.guid))}}
-        rep.update(pin.api_representation)
-        return rep
 
-    def userpin_representation(self, userpin):
-        rep = {'links': {'self': self.link(self.reverse_url(PinMaintenanceHandler.__name__, userpin.user_guid, userpin.pin_guid))}}
-        rep.update(userpin.api_representation)
-        return rep
-
-
-#
-# base handler to encapsulate common methods/info such as identity
-#
-class BaseHandler(web.RequestHandler):
-    AUTH_COOKIE = 'user'
-
-    def prepare(self):
-        super(BaseHandler, self).prepare()
-        if not self.application.base_uri:
-            self.application.base_uri = '{}://{}'.format(self.request.protocol, self.request.host)
-
-    def compute_etag(self):
-        return None     # disable caching since Angular $resource doesn't deal with 304's well
-
-    def get_current_user(self):
-        return self.get_secure_cookie(self.AUTH_COOKIE)
-
-    def set_current_user(self, guid):
-        self.set_secure_cookie(self.AUTH_COOKIE, guid)
-
-    def clear_current_user(self):
-        self.clear_cookie(self.AUTH_COOKIE)
-
-
-class UserResourceHandler(BaseHandler):
-    def prepare(self):
-        super(UserResourceHandler, self).prepare()
-        # assumes first path arg in uri is the id of the resource owner
-        authenticated_uid = self.get_current_user()
-        if len(self.path_args) > 0 and authenticated_uid != self.path_args[0]:
-            self.send_error(httplib.UNAUTHORIZED)
-
-
-#
-# admin endpoint handlers
-#
-class VersionHandler(BaseHandler):
-    def get(self):
-        self.write({'major': self.application.API_MAJOR_VERSION,
-                    'minor': self.application.API_MINOR_VERSION,
-                    'api_version': '{}.{}'.format(self.application.API_MAJOR_VERSION, self.application.API_MINOR_VERSION)})
-
-
-class UsersHandler(BaseHandler):
-    @gen.coroutine
-    def get(self):
-        try:
-            name = self.get_argument('name')
-            pw = self.get_argument('pw')
-            target_url = self.get_argument('next', None)
-        except web.MissingArgumentError as e:
-            self.application.log.info('Users GET (login) request malformed, error={}, url={}, body={}'.format(e, self.request.uri, self.request.body))
-            self.send_error(httplib.BAD_REQUEST)
-            return
-
-        try:
-            user = yield User.login(name, pw)
-        except (ValueError, UnauthorizedError):
-            self.send_error(httplib.UNAUTHORIZED)
-            return
-
-        self.set_current_user(user.guid)
-        if target_url:
-            self.redirect(target_url)
-        else:
-            self.write(self.application.user_representation(user))
-
-    @gen.coroutine
-    def post(self):
-        try:
-            body = json.loads(self.request.body)
-            name = body['name']
-            pw = body['pw']
-            target_url = body.get('next')
-        except (KeyError, ValueError, TypeError) as e:
-            self.application.log.info('User creation request malformed, error={}, url={}, body={}'.format(e, self.request.uri, self.request.body))
-            self.send_error(httplib.BAD_REQUEST)
-            return
-
-        exists = yield User.exists(name)
-        if exists:
-            self.send_error(httplib.CONFLICT)
-            return
-
-        user = User(name, pw)
-        yield user.save()
-        self.set_current_user(user.guid)
-        if target_url:
-            self.redirect(target_url)
-        else:
-            self.set_header('Location', self.reverse_url(UserMaintenanceHandler.__name__, user.guid))
-            self.write(self.application.user_representation(user))
-            self.set_status(httplib.CREATED)
-
-
-class UserMaintenanceHandler(UserResourceHandler):
-    @gen.coroutine
-    def get(self, uid):
-        try:
-            user = yield User.fetch(uid)
-        except KeyError:
-            self.clear_current_user()
-            self.send_error(httplib.NOT_FOUND)
-            return
-
-        self.write(self.application.user_representation(user))
-
-    def patch(self, uid):
-        raise NotImplementedError
-
-    def delete(self, uid):
-        raise NotImplementedError
-
-
-class RawPinsHandler(BaseHandler):
-    @gen.coroutine
-    def get(self):
-        limit = self.get_argument('limit', None)
-        pins = yield Pin.list(limit)
-        self.write({pin.guid: self.application.pin_representation(pin) for pin in pins})
-
-
-class RawPinMaintenanceHandler(BaseHandler):
-    @gen.coroutine
-    def get(self, pid):
-        try:
-            pin = yield Pin.fetch(guid=pid)
-        except KeyError:
-            self.send_error(httplib.NOT_FOUND)
-            return
-        self.write(self.application.pin_representation(pin))
-
-
-class UserPinsHandler(UserResourceHandler):
-    @gen.coroutine
-    def get(self, uid):
-        limit = self.get_argument('limit', None)
-        userpins = yield UserPin.list_for_user(uid, limit)
-        self.write({upin.pin_guid: self.application.userpin_representation(upin) for upin in userpins})
-
-    @gen.coroutine
-    def post(self, uid):
-        try:
-            body = json.loads(self.request.body)
-            pid = body.get('pin_id')
-            content = body.get('content')
-            image = body.get('image')
-            title = body.get('title')
-            caption = body.get('caption')
-            private = body.get('private', False)
-            if pid is None and content is None:
-                raise KeyError
-        except (KeyError, ValueError, TypeError):
-            self.send_error(httplib.BAD_REQUEST)
-            return
-
-        try:
-            pin = yield Pin.fetch(guid=pid, content=content)
-        except KeyError:
-            if not content:
-                self.send_error(httplib.NOT_FOUND)
-                return
-            pin = Pin(content, image, title)
-            yield pin.save()
-
-        userpin = UserPin(uid, pin, caption, private)
-        yield userpin.save()
-        self.write(self.application.userpin_representation(userpin))
-        self.set_status(httplib.CREATED)
-
-
-class PinMaintenanceHandler(UserResourceHandler):
-    @gen.coroutine
-    def get(self, uid, pid):
-        try:
-            userpin = yield UserPin.fetch(uid, pid)
-        except KeyError:
-            self.send_error(httplib.NOT_FOUND)
-            return
-        self.write(self.application.userpin_representation(userpin))
-
-    def patch(self, uid, pid):
-        raise NotImplementedError
-
-    @gen.coroutine
-    def delete(self, uid, pid):
-        yield UserPin.delete(uid, pid)
-        self.set_status(httplib.NO_CONTENT)
+if __name__ == "__main__":
+    db.create_all()
+    app.run(port=8080, debug=True)
